@@ -7,19 +7,33 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  quality:
+  quality-checks:
+    name: Code Quality Checks
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/pip
+          ~/.cache/pypoetry
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements/*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ matrix.python-version }}-
+          ${{ runner.os }}-pip-
 
     - name: Install dependencies
       run: |
@@ -27,15 +41,71 @@ jobs:
         pip install -r requirements/base.txt
         pip install -r requirements/dev.txt
 
-    - name: Run Ruff
+    - name: Run Ruff linter
       run: |
-        ruff check src/ tests/
+        ruff check src/ tests/ --output-format=github
 
-    - name: Run Black
+    - name: Check code formatting with Black
       run: |
-        black --check src/ tests/
+        black --check --diff src/ tests/
 
-    - name: Run MyPy
+    - name: Type checking with MyPy
       run: |
-        mypy src/
+        mypy src/ --install-types --non-interactive
       continue-on-error: true
+
+    - name: Run tests with coverage
+      run: |
+        pytest tests/ --cov=src --cov-report=xml --cov-report=term-missing --cov-report=html
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-${{ matrix.python-version }}
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Upload coverage HTML report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-report-${{ matrix.python-version }}
+        path: htmlcov/
+        retention-days: 30
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          .pytest_cache/
+          coverage.xml
+        retention-days: 30
+
+  code-complexity:
+    name: Code Complexity Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install radon
+      run: pip install radon
+
+    - name: Check cyclomatic complexity
+      run: |
+        radon cc src/ -a -nb
+
+    - name: Check maintainability index
+      run: |
+        radon mi src/ -nb
