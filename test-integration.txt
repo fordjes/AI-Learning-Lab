@@ -1,0 +1,2 @@
+Testing GitHub to Linear integration
+This commit should link to YEP-6 in Linear
